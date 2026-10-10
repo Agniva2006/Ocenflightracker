@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.db
+freight.db
+.env
+.venv/
+venv/
+*.pyo
+.DS_Store
+.vscode/
+.idea/
