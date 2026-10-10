@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% if not user %}
+<div class="max-w-md mx-auto mt-16 bg-white p-8 rounded-2xl border border-slate-200">
+    <p class="text-xs font-semibold uppercase tracking-widest text-ocean-600 mb-2">Secure access</p>
+    <h2 class="text-2xl font-bold text-slate-800 mb-6">Sign in to the tracker</h2>
+    {% if login_error %}
+        <div class="bg-red-50 text-red-600 p-3 rounded text-sm mb-4 border border-red-200">{{ login_error }}</div>
+    {% endif %}
+    <form action="/login" method="POST" class="space-y-4">
+        <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-1">Username</label>
+            <input type="text" name="username" required class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
+        </div>
+        <div>
+            <label class="block text-sm font-semibold text-slate-700 mb-1">Password</label>
+            <input type="password" name="password" required class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
+        </div>
+        <button type="submit" class="w-full bg-ocean-800 hover:bg-ocean-600 text-white font-bold py-2.5 rounded-lg text-sm">Sign In</button>
+    </form>
+    <div class="mt-6 p-3 bg-slate-50 border rounded-lg text-xs text-slate-600 space-y-1">
+        <p class="font-semibold">Demo accounts</p>
+        <p>Admin <code>admin</code> / <code>admin123</code></p>
+        <p>User <code>user</code> / <code>user123</code></p>
+    </div>
+</div>
+{% else %}
+
+<div class="space-y-8">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div class="bg-white p-4 rounded-xl border">
+            <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Shipments</p>
+            <p class="text-2xl font-bold mt-1">{{ shipments|length }}</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl border">
+            <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">In Transit</p>
+            <p class="text-2xl font-bold mt-1 text-sky-700">{{ counts['In Transit'] }}</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl border">
+            <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Delayed</p>
+            <p class="text-2xl font-bold mt-1 text-rose-700">{{ counts['Delayed'] }}</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl border">
+            <p class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Delivered</p>
+            <p class="text-2xl font-bold mt-1 text-emerald-700">{{ counts['Delivered'] }}</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl border flex items-center justify-center h-28">
+            <canvas id="statusChart"></canvas>
+        </div>
+    </div>
+
+    <div class="flex flex-wrap gap-2">
+        {% if user.role == 'admin' %}
+        <button onclick="triggerEmailParsing()" class="bg-emerald-700 hover:bg-emerald-600 text-white font-semibold py-2 px-4 rounded-lg text-xs">Process inbox emails</button>
+        <button onclick="toggleShipmentModal()" class="bg-ocean-800 hover:bg-ocean-600 text-white font-semibold py-2 px-4 rounded-lg text-xs">Add shipment</button>
+        {% endif %}
+        <a href="/api/export/rates" class="bg-white border hover:bg-slate-50 font-semibold py-2 px-4 rounded-lg text-xs">Export rates CSV</a>
+        <a href="/api/export/shipments" class="bg-white border hover:bg-slate-50 font-semibold py-2 px-4 rounded-lg text-xs">Export shipments CSV</a>
+    </div>
+
+    <section class="bg-white p-6 rounded-xl border">
+        <h2 class="text-lg font-bold text-slate-800 mb-4 pb-2 border-b">1. Rate Search</h2>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <select id="src_orig" class="border rounded-lg p-2 text-sm">
+                <option value="">All origin ports</option>
+                {% for p in origins %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+            </select>
+            <select id="src_dest" class="border rounded-lg p-2 text-sm">
+                <option value="">All destination ports</option>
+                {% for p in destinations %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+            </select>
+            <select id="src_cont" class="border rounded-lg p-2 text-sm">
+                <option value="">All containers</option>
+                <option value="20ft">20ft</option>
+                <option value="40ft">40ft</option>
+            </select>
+            <button onclick="executeRateSearch()" class="bg-ocean-800 hover:bg-ocean-600 text-white font-bold py-2 rounded-lg text-sm">Search rates</button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm border-collapse">
+                <thead>
+                    <tr class="bg-slate-100 border-b text-slate-600 uppercase text-xs">
+                        <th class="p-3">Carrier</th>
+                        <th class="p-3">Route</th>
+                        <th class="p-3">Container</th>
+                        <th class="p-3">Rate (USD)</th>
+                        <th class="p-3">Transit</th>
+                        <th class="p-3">Cheapest</th>
+                    </tr>
+                </thead>
+                <tbody id="rate_table_body">
+                    {% for r in rates %}
+                    <tr class="border-b hover:bg-slate-50 {% if r.id in cheapest_ids %}bg-emerald-50{% endif %}">
+                        <td class="p-3 font-semibold">{{ r.carrier }}</td>
+                        <td class="p-3">{{ r.origin_port }} → {{ r.destination_port }}</td>
+                        <td class="p-3">{{ r.container_type }}</td>
+                        <td class="p-3 font-bold">${{ r.rate_usd }}</td>
+                        <td class="p-3">{{ r.transit_days }} days</td>
+                        <td class="p-3">
+                            {% if r.id in cheapest_ids %}
+                            <span class="bg-emerald-600 text-white text-xs px-2 py-1 rounded font-bold">BEST PRICE</span>
+                            {% else %}
+                            <span class="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded">Standard</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="bg-white p-6 rounded-xl border">
+        <div class="flex justify-between items-center mb-4 pb-2 border-b gap-3">
+            <h2 class="text-lg font-bold text-slate-800">2. Shipment Tracker</h2>
+            <input id="tracker_filter" type="text" onkeyup="filterShipmentsTable()" placeholder="Filter ID, carrier, port, status…" class="border rounded-lg px-3 py-1.5 text-xs w-56">
+        </div>
+        <div class="overflow-x-auto">
+            <table id="shipment_table" class="w-full text-left text-sm border-collapse">
+                <thead>
+                    <tr class="bg-slate-100 border-b text-slate-600 uppercase text-xs">
+                        <th class="p-3">Shipment ID</th>
+                        <th class="p-3">Carrier</th>
+                        <th class="p-3">Route &amp; type</th>
+                        <th class="p-3">Departure</th>
+                        <th class="p-3">Expected</th>
+                        <th class="p-3">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in shipments %}
+                    <tr class="border-b hover:bg-slate-50">
+                        <td class="p-3 font-bold text-ocean-600">{{ s.shipment_id }}</td>
+                        <td class="p-3">{{ s.carrier }}</td>
+                        <td class="p-3">{{ s.origin_port }} → {{ s.destination_port }} ({{ s.container_type }})</td>
+                        <td class="p-3">{{ s.departure_date }}</td>
+                        <td class="p-3">{{ s.expected_arrival }}</td>
+                        <td class="p-3">
+                            {% if s.status == 'Delivered' %}
+                                <span class="bg-emerald-100 text-emerald-800 font-bold text-xs px-2.5 py-1 rounded-full">Delivered</span>
+                            {% elif s.status == 'Delayed' %}
+                                <span class="bg-rose-100 text-rose-800 font-bold text-xs px-2.5 py-1 rounded-full">Delayed</span>
+                            {% else %}
+                                <span class="bg-sky-100 text-sky-800 font-bold text-xs px-2.5 py-1 rounded-full">In Transit</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="bg-white p-6 rounded-xl border">
+        <h2 class="text-lg font-bold text-slate-800 mb-4 pb-2 border-b">3. Invoice Audit</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <select id="inv_id" class="border rounded-lg p-2 text-sm">
+                <option value="">Select shipment ID</option>
+                {% for s in shipments %}<option value="{{ s.shipment_id }}">{{ s.shipment_id }} · {{ s.carrier }}</option>{% endfor %}
+            </select>
+            <input id="inv_amt" type="number" step="0.01" placeholder="Billed amount (USD)" class="border rounded-lg p-2 text-sm">
+            <button onclick="auditInvoice()" class="bg-indigo-700 hover:bg-indigo-600 text-white font-bold py-2 rounded-lg text-sm">Audit invoice</button>
+        </div>
+        <div class="flex items-center gap-3 text-xs text-slate-600 mb-4">
+            <label class="font-semibold">Or upload CSV</label>
+            <input id="inv_file" type="file" accept=".csv" class="text-xs">
+            <button onclick="auditInvoiceFile()" class="border px-3 py-1.5 rounded-lg font-semibold">Audit file</button>
+        </div>
+        <div id="inv_result" class="hidden p-4 rounded-lg text-sm font-semibold"></div>
+    </section>
+</div>
+
+<div id="shipmentModal" class="hidden fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-20">
+    <div class="bg-white rounded-xl p-6 max-w-md w-full border">
+        <h3 class="text-lg font-bold mb-4">Add shipment</h3>
+        <form id="addShipmentForm" onsubmit="submitNewShipment(event)" class="space-y-3">
+            <input name="shipment_id" required placeholder="Shipment ID (SHP1015)" class="w-full border p-2 text-sm rounded-lg">
+            <select name="carrier" required class="w-full border p-2 text-sm rounded-lg">
+                {% for c in carriers %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            </select>
+            <select name="origin_port" required class="w-full border p-2 text-sm rounded-lg">
+                {% for p in origins %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+            </select>
+            <select name="destination_port" required class="w-full border p-2 text-sm rounded-lg">
+                {% for p in destinations %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+            </select>
+            <select name="container_type" class="w-full border p-2 text-sm rounded-lg">
+                <option value="20ft">20ft</option>
+                <option value="40ft">40ft</option>
+            </select>
+            <input name="departure_date" type="date" required class="w-full border p-2 text-sm rounded-lg">
+            <input name="expected_arrival" type="date" required class="w-full border p-2 text-sm rounded-lg">
+            <div class="flex justify-end gap-2 pt-2">
+                <button type="button" onclick="toggleShipmentModal()" class="px-4 py-2 border text-xs rounded-lg">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-ocean-800 text-white text-xs font-bold rounded-lg">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    window.addEventListener('DOMContentLoaded', () => {
+        const ctx = document.getElementById('statusChart')?.getContext('2d');
+        if (ctx) {
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Delivered', 'Delayed', 'In Transit'],
+                    datasets: [{
+                        data: [{{ counts['Delivered'] }}, {{ counts['Delayed'] }}, {{ counts['In Transit'] }}],
+                        backgroundColor: ['#059669', '#e11d48', '#0284c7']
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+            });
+        }
+    });
+</script>
+{% endif %}
+{% endblock %}

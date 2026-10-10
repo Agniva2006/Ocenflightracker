@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ocean-freight-tracker
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    plan: free
+    numInstances: 1
+    healthCheckPath: /
+    autoDeploy: yes
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: 3.12.0
+    disk:
+      name: freight-data
+      mountPath: /data
+      sizeGB: 1
