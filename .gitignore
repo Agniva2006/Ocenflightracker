@@ -9,3 +9,15 @@ venv/
 .DS_Store
 .vscode/
 .idea/
+*.pdf
+!Problem_Statement*.pdf
+==_*
+*Downlo*
+workspaceStorage/
+long-text/
+mv2hevmu-*/
+Trae/
+*.tmp
+*.temp
+downloads/
+problem_*.pdf

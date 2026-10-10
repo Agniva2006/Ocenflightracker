@@ -19,13 +19,22 @@ from starlette.middleware.sessions import SessionMiddleware
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.getenv("DATA_DIR", BASE_DIR)
+DATA_DIR = os.path.abspath(DATA_DIR)
 DB_PATH = os.path.join(DATA_DIR, "freight.db")
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
-os.makedirs(DATA_DIR, exist_ok=True)
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+except OSError:
+    DATA_DIR = BASE_DIR
+    DB_PATH = os.path.join(DATA_DIR, "freight.db")
+    SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
+    os.makedirs(DATA_DIR, exist_ok=True)
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 
 CARRIER_HINTS = [
     ("oceanlink", "OceanLink Lines"),
@@ -70,7 +79,18 @@ class Shipment(Base):
     status = Column(String, default="In Transit")
 
 
-Base.metadata.create_all(bind=engine)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as _e:
+    import sys
+    print(f"[WARN] Could not create tables at {DB_PATH}: {_e}. Falling back to BASE_DIR.", file=sys.stderr)
+    DATA_DIR = BASE_DIR
+    DB_PATH = os.path.join(DATA_DIR, "freight.db")
+    SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
+    os.makedirs(DATA_DIR, exist_ok=True)
+    engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+    SessionLocal.configure(bind=engine)
+    Base.metadata.create_all(bind=engine)
 
 
 def get_db():
@@ -131,9 +151,13 @@ def seed_initial_data(db: Session):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db = SessionLocal()
-    seed_initial_data(db)
-    db.close()
+    try:
+        db = SessionLocal()
+        seed_initial_data(db)
+        db.close()
+    except Exception as _e:
+        import sys
+        print(f"[WARN] Seeding failed: {_e}", file=sys.stderr)
     yield
 
 
@@ -141,10 +165,10 @@ app = FastAPI(title="Ocean Freight Rate & Shipment Tracker", lifespan=lifespan)
 _session_secret = os.getenv("SESSION_SECRET")
 if not _session_secret:
     _session_secret = secrets.token_hex(32)
-app.add_middleware(SessionMiddleware, secret_key=_session_secret)
-os.makedirs("static", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+app.add_middleware(SessionMiddleware, secret_key=_session_secret, same_site="lax")
+os.makedirs(STATIC_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
 def get_current_user(request: Request):
